@@ -4,6 +4,9 @@ Personal practice monorepo: full-stack architecture mastery (`labs/`) + shipping
 small products (`products/`). Owner is a fintech CTO — treat as peer-level, move
 fast, focus on the architecturally hard parts. Read this before doing any work here.
 
+This is the **single canonical instruction file** (both Air and Claude Code read it).
+`CLAUDE.md` is only a pointer here — do not duplicate guidance into it.
+
 ## Prime directive: two hands, do not mix them
 
 - **`labs/**` = LEARNING.** Hand-coded by the human (GoLand / by hand). The friction
@@ -51,6 +54,32 @@ Never report success you have not observed. If a step was skipped, say so plainl
 - Always name the cost-to-serve and reliability trade-off. This is a lending/fintech
   brain — money movement, ledgers, correctness, high reliability.
 
+## Repo map & how to run
+
+- Three areas: `labs/` (numbered tracks `0-os` … `5-strategy`, each subtopic its own
+  dir), `products/` (`_template/` seeds a new product), `sandbox/` (`infra/` = shared
+  local deps, `scratch/` = gitignored throwaway).
+- **Each Go lab is its own module** (`go.mod`, `package main`) — no `go.work` ties them.
+  Run from inside the lab dir. Go `1.26.5`.
+
+      go run .            # run a lab from its directory
+      go test ./...       # its tests
+
+  Alternative entrypoints may be guarded by `//go:build ignore` (each with its own
+  `func main`, excluded from the default build); run one explicitly: `go run <file>.go`.
+- Shared deps (Postgres 16 + Redis 7):
+
+      cd sandbox/infra && docker compose up -d    # pg :5432, redis :6379
+      docker compose down
+
+  DSN `postgres://dev:dev@localhost:5432/playground`. If a lab ships a `schema.sql`, load
+  it first: `psql "<dsn>" -f schema.sql`.
+- Product scaffold: copy `products/_template/`, then `make up` / `make down` / `make logs`.
+- Gotcha: the `exposure-ledger` lab needs `github.com/lib/pq` + a running Postgres with
+  its `schema.sql` applied before `go run .`.
+- **Do not commit compiled binaries** — labs build to a binary named after the dir; use
+  `go run` and let `.gitignore` keep them out.
+
 ## Docs & status
 
 - Every lab has a `README.md` with three fields: **what / why (CTO lens) / status**.
@@ -59,8 +88,9 @@ Never report success you have not observed. If a step was skipped, say so plainl
 ## Git / workflow
 
 - Private repo `git@github.com:azat-amanbek/dev-labs.git`, default branch `main`.
-- Air runs agents in git worktrees — keep each task's changes scoped; human reviews the
-  diff before merging to `main`.
+- Air (Local Workspace + Full Access) writes **directly into the `main` working tree** —
+  it does NOT isolate in a separate worktree in this mode. Review the uncommitted diff
+  before committing; don't hand-edit the same files while an Air task is running.
 - Never commit secrets. `.env` is gitignored; `products/_template/.env.example` is the
   tracked sample.
 - Windows git needs a `safe.directory` exception for the WSL UNC path (already set) — do
