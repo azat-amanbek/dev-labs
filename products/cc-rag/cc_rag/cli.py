@@ -18,8 +18,8 @@ def _default_memory() -> str:
     return "/mnt/c/Users/aamanbek/.claude/projects/C--Users-aamanbek-Desktop-startup/memory"
 
 
-def _queries_path() -> str:
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "queries.yaml")
+def _repo_file(name: str) -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), name)
 
 
 def main(argv=None):
@@ -31,20 +31,21 @@ def main(argv=None):
     pi = sub.add_parser("index", help="(re)build the index")
     pi.add_argument("--projects", default=_default_projects())
     pi.add_argument("--memory", default=_default_memory())
+    pi.add_argument("--knowledge", default=_repo_file("knowledge"))
 
     pq = sub.add_parser("query", help="search the index")
     pq.add_argument("text")
     pq.add_argument("-k", type=int, default=5)
 
     pe = sub.add_parser("eval", help="recall@k / MRR over queries.yaml")
-    pe.add_argument("--queries", default=_queries_path())
+    pe.add_argument("--queries", default=_repo_file("queries.yaml"))
     pe.add_argument("-k", type=int, default=5)
 
     a = ap.parse_args(argv)
     emb = Embedder(a.model)
 
     if a.cmd == "index":
-        n, model = build(a.projects, a.memory, a.data, emb)
+        n, model = build(a.projects, a.memory, a.knowledge, a.data, emb)
         print(f"indexed {n} chunks with {model} -> {a.data}")
     elif a.cmd == "query":
         for score, m in search(a.text, a.data, emb, k=a.k):

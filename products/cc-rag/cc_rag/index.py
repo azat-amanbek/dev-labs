@@ -19,8 +19,9 @@ def default_data_dir() -> str:
     return os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 
-def build(projects_dir: str, memory_dir: str, data_dir: str, emb: Embedder, batch: int = 256):
-    chunks = collect(projects_dir, memory_dir)
+def build(projects_dir: str, memory_dir: str, knowledge_dir: str, data_dir: str,
+          emb: Embedder, batch: int = 256):
+    chunks = collect(projects_dir, memory_dir, knowledge_dir)
     if not chunks:
         raise SystemExit("no chunks found — check --projects / --memory paths")
     texts = [c.text for c in chunks]

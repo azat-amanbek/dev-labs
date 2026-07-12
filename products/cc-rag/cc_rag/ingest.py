@@ -70,19 +70,22 @@ def iter_transcripts(projects_dir: str):
                 yield Chunk(c, f"session {session[:8]} · {ts} · {role}", "transcript", session)
 
 
-def iter_memory(memory_dir: str):
-    for f in glob.glob(os.path.join(memory_dir, "*.md")):
+def iter_markdown(directory: str, kind: str):
+    """Index a folder of .md docs (memory notes or the distilled knowledge base)."""
+    for f in glob.glob(os.path.join(directory, "*.md")):
         name = os.path.basename(f)
         try:
             text = open(f, encoding="utf-8").read()
         except OSError:
             continue
         for c in _split(text):
-            yield Chunk(c, f"memory/{name}", "memory", name)
+            yield Chunk(c, f"{kind}/{name}", kind, name)
 
 
-def collect(projects_dir: str, memory_dir: str) -> list[Chunk]:
+def collect(projects_dir: str, memory_dir: str, knowledge_dir: str | None = None) -> list[Chunk]:
     chunks = list(iter_transcripts(projects_dir))
-    if os.path.isdir(memory_dir):
-        chunks += list(iter_memory(memory_dir))
+    if memory_dir and os.path.isdir(memory_dir):
+        chunks += list(iter_markdown(memory_dir, "memory"))
+    if knowledge_dir and os.path.isdir(knowledge_dir):
+        chunks += list(iter_markdown(knowledge_dir, "knowledge"))
     return chunks
