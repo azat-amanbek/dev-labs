@@ -75,6 +75,10 @@ type sessRow struct {
 	Project string  `json:"project"`
 	Cost    float64 `json:"cost"`
 }
+type insight struct {
+	Level string `json:"level"` // good | watch | info
+	Text  string `json:"text"`
+}
 type report struct {
 	Files        int       `json:"files"`
 	Total        float64   `json:"total"`
@@ -100,15 +104,15 @@ type report struct {
 	Sessions int `json:"sessions"`
 
 	// derived
-	MonthProjected float64  `json:"monthProjected"` // run-rate to end of month
-	YearRate       float64  `json:"yearRate"`
-	CacheHitRate   float64  `json:"cacheHitRate"`   // 0..1
-	CacheChurnPct  float64  `json:"cacheChurnPct"`  // cache-write cost / total
-	OutputSharePct float64  `json:"outputSharePct"` // output cost / total
-	IfSonnet       float64  `json:"ifSonnet"`       // same tokens, Sonnet rates
-	IfHaiku        float64  `json:"ifHaiku"`
-	PrefixTax      float64  `json:"prefixTax"` // avg cache-write $ per session
-	Insights       []string `json:"insights"`
+	MonthProjected float64   `json:"monthProjected"` // run-rate to end of month
+	YearRate       float64   `json:"yearRate"`
+	CacheHitRate   float64   `json:"cacheHitRate"`   // 0..1
+	CacheChurnPct  float64   `json:"cacheChurnPct"`  // cache-write cost / total
+	OutputSharePct float64   `json:"outputSharePct"` // output cost / total
+	IfSonnet       float64   `json:"ifSonnet"`       // same tokens, Sonnet rates
+	IfHaiku        float64   `json:"ifHaiku"`
+	PrefixTax      float64   `json:"prefixTax"` // avg cache-write $ per session
+	Insights       []insight `json:"insights"`
 
 	KZT float64 `json:"kzt"` // USD->KZT rate for tenge display
 }
@@ -233,38 +237,41 @@ func analyze(dir string) (*report, error) {
 
 func money(x float64) string { return "$" + fmt.Sprintf("%.2f", x) }
 
-func buildInsights(r *report) []string {
-	var out []string
+func buildInsights(r *report) []insight {
+	var out []insight
+	add := func(lvl, s string) { out = append(out, insight{lvl, s}) }
 	pct := func(f float64) string { return fmt.Sprintf("%.0f%%", f) }
 	hit := r.CacheHitRate * 100
 
 	switch {
 	case hit >= 85:
-		out = append(out, fmt.Sprintf("Cache hit rate %s — healthy. The context prefix stays stable across turns, so caching is doing its job (saved %s so far).", pct(hit), money(r.CacheSavings)))
+		add("good", fmt.Sprintf("Cache hit rate %s — healthy. The context prefix stays stable across turns, so caching earns its keep (saved %s).", pct(hit), money(r.CacheSavings)))
 	case hit >= 60:
-		out = append(out, fmt.Sprintf("Cache hit rate %s — some slack. Something early in the prefix changes between turns; check for timestamps/IDs before the last cache breakpoint.", pct(hit)))
+		add("watch", fmt.Sprintf("Cache hit rate %s — some slack. Something early in the prefix changes between turns; check for timestamps/IDs before the last cache breakpoint.", pct(hit)))
 	default:
-		out = append(out, fmt.Sprintf("Cache hit rate only %s — the prefix breaks often. Hunt for volatile content (dates, UUIDs, unsorted JSON) high in the context.", pct(hit)))
+		add("watch", fmt.Sprintf("Cache hit rate only %s — the prefix breaks often. Hunt for volatile content (dates, UUIDs, unsorted JSON) high in the context.", pct(hit)))
 	}
 
 	if r.CacheChurnPct >= 15 {
-		out = append(out, fmt.Sprintf("Cache-write is %s of spend — you pay the 1.25x write premium a lot. A large or frequently-changing prefix (heavy plugin stack) drives this.", pct(r.CacheChurnPct)))
+		add("watch", fmt.Sprintf("Cache-write is %s of spend — you pay the 1.25x write premium a lot. A large or frequently-changing prefix (heavy plugin stack) drives this.", pct(r.CacheChurnPct)))
+	} else {
+		add("good", fmt.Sprintf("Cache-write only %s of spend — prefix is stable, writes amortize well.", pct(r.CacheChurnPct)))
 	}
 
 	if r.OutputSharePct >= 30 {
-		out = append(out, fmt.Sprintf("Output tokens are %s of spend (output bills at 5x input). Lower effort or terser replies (caveman mode) is the lever.", pct(r.OutputSharePct)))
+		add("watch", fmt.Sprintf("Output is %s of spend (bills at 5x input). Lower effort or terser replies (caveman mode) is the lever.", pct(r.OutputSharePct)))
 	} else {
-		out = append(out, fmt.Sprintf("Output tokens are %s of spend — the bill is dominated by context, not generation.", pct(r.OutputSharePct)))
+		add("info", fmt.Sprintf("Output is %s of spend — the bill is dominated by context, not generation.", pct(r.OutputSharePct)))
 	}
 
 	if r.IfSonnet > 0 && r.Total > 0 {
 		sv := (1 - r.IfSonnet/r.Total) * 100
 		hv := (1 - r.IfHaiku/r.Total) * 100
-		out = append(out, fmt.Sprintf("Model lever: the same tokens on Sonnet ~%s (-%.0f%%), on Haiku ~%s (-%.0f%%). It's a quality tradeoff, not free — that's the price of staying on Opus.", money(r.IfSonnet), sv, money(r.IfHaiku), hv))
+		add("info", fmt.Sprintf("Model lever: the same tokens on Sonnet ~%s (-%.0f%%), on Haiku ~%s (-%.0f%%). A quality tradeoff, not free — the price of staying on Opus.", money(r.IfSonnet), sv, money(r.IfHaiku), hv))
 	}
 
 	if r.PrefixTax > 0 {
-		out = append(out, fmt.Sprintf("Prefix tax: ~%s per session goes to cache-writes before any real work — the cost of your loaded context/plugin stack.", money(r.PrefixTax)))
+		add("info", fmt.Sprintf("Prefix tax: ~%s per session goes to cache-writes before any real work — the cost of your loaded context/plugin stack.", money(r.PrefixTax)))
 	}
 	return out
 }
@@ -379,7 +386,7 @@ func printCLI(r *report) {
 
 	fmt.Println("--- insights ---")
 	for _, s := range r.Insights {
-		fmt.Printf("  • %s\n", s)
+		fmt.Printf("  • %s\n", s.Text)
 	}
 	fmt.Println()
 }
