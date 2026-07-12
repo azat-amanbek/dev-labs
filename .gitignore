@@ -1,0 +1,27 @@
+# build / binaries
+*.exe
+*.out
+*.test
+bin/
+dist/
+
+# go
+vendor/
+
+# node / python
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+
+# secrets / local env
+.env
+*.local
+
+# throwaway scratch
+sandbox/scratch/
+
+# os / editor
+.DS_Store
+.idea/
+*.swp
