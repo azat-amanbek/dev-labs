@@ -18,8 +18,12 @@ def _default_memory() -> str:
     return "/mnt/c/Users/aamanbek/.claude/projects/C--Users-aamanbek-Desktop-startup/memory"
 
 
+# Absolute so defaults work whether run via `uv run` in-repo or a global install.
+REPO = os.path.expanduser("~/dev/products/cc-rag")
+
+
 def _repo_file(name: str) -> str:
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), name)
+    return os.path.join(REPO, name)
 
 
 def main(argv=None):

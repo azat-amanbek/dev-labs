@@ -16,7 +16,8 @@ from .ingest import collect
 
 
 def default_data_dir() -> str:
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    # stable location so a globally-installed `rag` finds the same index
+    return os.path.join(os.path.expanduser("~"), ".cache", "cc-rag")
 
 
 def build(projects_dir: str, memory_dir: str, knowledge_dir: str, data_dir: str,
