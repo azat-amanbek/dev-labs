@@ -20,8 +20,13 @@ const dashboardHTML = `<!doctype html>
     font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
   .wrap{max-width:980px;margin:0 auto;padding:28px 20px 60px}
   h1{font-size:18px;margin:0 0 2px} .sub{color:var(--dim);font-size:12px;margin-bottom:22px}
-  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:26px}
-  @media(max-width:680px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+  .chips{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .chip{background:#10131a;border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+  .chip .ck{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+  .chip .cv{font-size:16px;font-weight:650;margin-top:2px}
+  ul.insights{margin:0;padding-left:18px}
+  ul.insights li{margin:9px 0}
   .tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
   .tile .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
   .tile .v{font-size:24px;font-weight:650;margin-top:6px}
@@ -104,7 +109,24 @@ tiles.appendChild(tile("Total spend",money(D.total),null,commas(D.turns)+" assis
 tiles.appendChild(tile("This month",money(D.month)));
 tiles.appendChild(tile("Today",money(D.today)));
 tiles.appendChild(tile("Cache saved",money(D.cacheSavings),"good","vs full input rate"));
+tiles.appendChild(tile("Proj. month",money(D.monthProjected),null,"~"+money(D.yearRate)+" / yr"));
 app.appendChild(tiles);
+
+// insights & optimization
+(function(){
+  var s=el("section");
+  s.appendChild(el("h2",null,"Insights & optimization"));
+  var chips=el("div","chips");
+  function chip(k,v){var c=el("div","chip");c.appendChild(el("div","ck",k));c.appendChild(el("div","cv",v));return c;}
+  chips.appendChild(chip("cache hit",(D.cacheHitRate*100).toFixed(0)+"%"));
+  chips.appendChild(chip("cache churn",D.cacheChurnPct.toFixed(0)+"%"));
+  chips.appendChild(chip("output share",D.outputSharePct.toFixed(0)+"%"));
+  s.appendChild(chips);
+  var ul=el("ul","insights");
+  D.insights.forEach(function(t){ ul.appendChild(el("li",null,t)); });
+  s.appendChild(ul);
+  app.appendChild(s);
+})();
 
 // daily spend
 app.appendChild(barSection("Daily spend", D.byDay.map(function(d){

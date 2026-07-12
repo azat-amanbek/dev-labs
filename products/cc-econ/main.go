@@ -90,6 +90,25 @@ type report struct {
 	ByProject    []nameRow `json:"byProject"`
 	ByModel      []nameRow `json:"byModel"`
 	TopSessions  []sessRow `json:"topSessions"`
+
+	// cost composition (for insights)
+	CostIn  float64 `json:"costIn"`
+	CostOut float64 `json:"costOut"`
+	CostCW  float64 `json:"costCW"`
+	CostCR  float64 `json:"costCR"`
+
+	Sessions int `json:"sessions"`
+
+	// derived
+	MonthProjected float64  `json:"monthProjected"` // run-rate to end of month
+	YearRate       float64  `json:"yearRate"`
+	CacheHitRate   float64  `json:"cacheHitRate"`   // 0..1
+	CacheChurnPct  float64  `json:"cacheChurnPct"`  // cache-write cost / total
+	OutputSharePct float64  `json:"outputSharePct"` // output cost / total
+	IfSonnet       float64  `json:"ifSonnet"`       // same tokens, Sonnet rates
+	IfHaiku        float64  `json:"ifHaiku"`
+	PrefixTax      float64  `json:"prefixTax"` // avg cache-write $ per session
+	Insights       []string `json:"insights"`
 }
 
 func analyze(dir string) (*report, error) {
@@ -102,11 +121,6 @@ func analyze(dir string) (*report, error) {
 	proj := map[string]float64{}
 	model := map[string]float64{}
 	sess := map[string]*sessRow{}
-
-	price := func(u usage, rt rate) float64 {
-		return float64(u.Input)/1e6*rt.in + float64(u.Output)/1e6*rt.out +
-			float64(u.CacheWrite)/1e6*rt.cacheWrite + float64(u.CacheRead)/1e6*rt.cacheRead
-	}
 
 	for _, f := range files {
 		project := filepath.Base(filepath.Dir(f))
@@ -131,9 +145,17 @@ func analyze(dir string) (*report, error) {
 				continue
 			}
 			u := e.Message.Usage
-			c := price(u, rt)
+			cIn := float64(u.Input) / 1e6 * rt.in
+			cOut := float64(u.Output) / 1e6 * rt.out
+			cCW := float64(u.CacheWrite) / 1e6 * rt.cacheWrite
+			cCR := float64(u.CacheRead) / 1e6 * rt.cacheRead
+			c := cIn + cOut + cCW + cCR
 
 			r.Total += c
+			r.CostIn += cIn
+			r.CostOut += cOut
+			r.CostCW += cCW
+			r.CostCR += cCR
 			r.CacheSavings += float64(u.CacheRead) / 1e6 * (rt.in - rt.cacheRead)
 			r.Turns++
 			r.In += u.Input
@@ -172,10 +194,77 @@ func analyze(dir string) (*report, error) {
 		r.TopSessions = append(r.TopSessions, *s)
 	}
 	sort.Slice(r.TopSessions, func(i, j int) bool { return r.TopSessions[i].Cost > r.TopSessions[j].Cost })
+	r.Sessions = len(sess)
 	if len(r.TopSessions) > 12 {
 		r.TopSessions = r.TopSessions[:12]
 	}
+
+	// run-rate projection to end of month
+	daysElapsed := float64(now.Day())
+	daysInMonth := float64(time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day())
+	if daysElapsed > 0 {
+		r.MonthProjected = r.Month / daysElapsed * daysInMonth
+	}
+	r.YearRate = r.MonthProjected * 12
+
+	// efficiency metrics
+	if r.CR+r.In > 0 {
+		r.CacheHitRate = float64(r.CR) / float64(r.CR+r.In)
+	}
+	if r.Total > 0 {
+		r.CacheChurnPct = r.CostCW / r.Total * 100
+		r.OutputSharePct = r.CostOut / r.Total * 100
+	}
+	// what-if: same tokens, different model rates (cache rates scale with input)
+	rescale := func(rt rate) float64 {
+		return float64(r.In)/1e6*rt.in + float64(r.Out)/1e6*rt.out +
+			float64(r.CW)/1e6*rt.cacheWrite + float64(r.CR)/1e6*rt.cacheRead
+	}
+	r.IfSonnet = rescale(rates["sonnet"])
+	r.IfHaiku = rescale(rates["haiku"])
+	if r.Sessions > 0 {
+		r.PrefixTax = r.CostCW / float64(r.Sessions)
+	}
+	r.Insights = buildInsights(r)
 	return r, nil
+}
+
+func money(x float64) string { return "$" + fmt.Sprintf("%.2f", x) }
+
+func buildInsights(r *report) []string {
+	var out []string
+	pct := func(f float64) string { return fmt.Sprintf("%.0f%%", f) }
+	hit := r.CacheHitRate * 100
+
+	switch {
+	case hit >= 85:
+		out = append(out, fmt.Sprintf("Cache hit rate %s — healthy. The context prefix stays stable across turns, so caching is doing its job (saved %s so far).", pct(hit), money(r.CacheSavings)))
+	case hit >= 60:
+		out = append(out, fmt.Sprintf("Cache hit rate %s — some slack. Something early in the prefix changes between turns; check for timestamps/IDs before the last cache breakpoint.", pct(hit)))
+	default:
+		out = append(out, fmt.Sprintf("Cache hit rate only %s — the prefix breaks often. Hunt for volatile content (dates, UUIDs, unsorted JSON) high in the context.", pct(hit)))
+	}
+
+	if r.CacheChurnPct >= 15 {
+		out = append(out, fmt.Sprintf("Cache-write is %s of spend — you pay the 1.25x write premium a lot. A large or frequently-changing prefix (heavy plugin stack) drives this.", pct(r.CacheChurnPct)))
+	}
+
+	if r.OutputSharePct >= 30 {
+		out = append(out, fmt.Sprintf("Output tokens are %s of spend (output bills at 5x input). Lower effort or terser replies (caveman mode) is the lever.", pct(r.OutputSharePct)))
+	} else {
+		out = append(out, fmt.Sprintf("Output tokens are %s of spend — the bill is dominated by context, not generation.", pct(r.OutputSharePct)))
+	}
+
+	if r.IfSonnet > 0 && r.Total > 0 {
+		sv := (1 - r.IfSonnet/r.Total) * 100
+		hv := (1 - r.IfHaiku/r.Total) * 100
+		out = append(out, fmt.Sprintf("Model lever: the same tokens on Sonnet ~%s (-%.0f%%), on Haiku ~%s (-%.0f%%). It's a quality tradeoff, not free — that's the price of staying on Opus.", money(r.IfSonnet), sv, money(r.IfHaiku), hv))
+	}
+
+	if r.PrefixTax > 0 {
+		out = append(out, fmt.Sprintf("Prefix tax: ~%s per session goes to cache-writes before any real work — the cost of your loaded context/plugin stack.", money(r.PrefixTax)))
+	}
+	return out
 }
 
 func sortedRows(m map[string]float64) []nameRow {
@@ -229,7 +318,8 @@ func printCLI(r *report) {
 	fmt.Printf("  TOTAL spend   : $%8.2f   (%s turns)\n", r.Total, commas(r.Turns))
 	fmt.Printf("  this month    : $%8.2f\n", r.Month)
 	fmt.Printf("  today         : $%8.2f\n", r.Today)
-	fmt.Printf("  cache savings : $%8.2f\n\n", r.CacheSavings)
+	fmt.Printf("  proj. month   : $%8.2f   (~$%s/yr at this rate)\n", r.MonthProjected, commas(int(r.YearRate)))
+	fmt.Printf("  cache savings : $%8.2f   (hit rate %.0f%%)\n\n", r.CacheSavings, r.CacheHitRate*100)
 	fmt.Printf("  tokens: in %s | out %s | cache-write %s | cache-read %s\n\n",
 		commas(r.In), commas(r.Out), commas(r.CW), commas(r.CR))
 
@@ -245,6 +335,12 @@ func printCLI(r *report) {
 			break
 		}
 		fmt.Printf("  $%8.2f  %-22s  %s\n", s.Cost, trunc(s.Project, 22), s.Session[:8])
+	}
+	fmt.Println()
+
+	fmt.Println("--- insights ---")
+	for _, s := range r.Insights {
+		fmt.Printf("  • %s\n", s)
 	}
 	fmt.Println()
 }
