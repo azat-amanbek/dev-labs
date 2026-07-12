@@ -59,7 +59,7 @@ const dashboardHTML = `<!doctype html>
 <body>
 <div class="wrap">
   <h1>cc-econ</h1>
-  <div class="sub">Claude Code token economics · reload to refresh</div>
+  <div class="sub" id="sub">Claude Code token economics</div>
   <div id="app"></div>
 </div>
 <script>
@@ -105,6 +105,9 @@ function barSection(title,rows,good){
 }
 
 var app=document.getElementById("app");
+document.getElementById("sub").textContent =
+  "shadow price (Max plan) — API-list-equivalent, not a bill · USD→KZT ₸"+
+  (D.kzt||0).toFixed(1)+" · reload to refresh";
 
 // tiles
 var tiles=el("div","tiles");

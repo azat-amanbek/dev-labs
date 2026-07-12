@@ -286,8 +286,14 @@ func main() {
 	}
 	dir := flag.String("dir", def, "Claude Code projects directory")
 	serve := flag.String("serve", "", "serve dashboard at this address, e.g. :7777")
-	kzt := flag.Float64("kzt", 472.0, "USD->KZT rate for tenge display (0 to hide)")
+	kzt := flag.Float64("kzt", 472.0, "USD->KZT fallback rate (0 to hide tenge)")
+	fx := flag.Bool("fx", true, "fetch live USD->KZT rate (fallback to -kzt)")
 	flag.Parse()
+
+	rateKZT := *kzt
+	if *fx && *kzt > 0 {
+		rateKZT = liveKZT(*kzt)
+	}
 
 	if *serve != "" {
 		http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
@@ -296,7 +302,7 @@ func main() {
 				http.Error(w, err.Error(), 500)
 				return
 			}
-			r.KZT = *kzt
+			r.KZT = rateKZT
 			b, _ := json.Marshal(r)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Write([]byte(strings.Replace(dashboardHTML, "__DATA__", string(b), 1)))
@@ -314,7 +320,7 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	r.KZT = *kzt
+	r.KZT = rateKZT
 	printCLI(r)
 }
 
@@ -325,8 +331,29 @@ func tenge(usd, rate float64) string {
 	return "₸" + commas(int(usd*rate))
 }
 
+// liveKZT fetches the current USD->KZT rate; returns fallback on any error.
+func liveKZT(fallback float64) float64 {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("https://open.er-api.com/v6/latest/USD")
+	if err != nil {
+		return fallback
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Rates map[string]float64 `json:"rates"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return fallback
+	}
+	if r, ok := out.Rates["KZT"]; ok && r > 0 {
+		return r
+	}
+	return fallback
+}
+
 func printCLI(r *report) {
-	fmt.Printf("=== Claude Code economics (%d transcripts) ===\n\n", r.Files)
+	fmt.Printf("=== Claude Code economics (%d transcripts) ===\n", r.Files)
+	fmt.Printf("    shadow price (Max plan): API-list-equivalent, not a bill · USD/KZT %.1f\n\n", r.KZT)
 	fmt.Printf("  TOTAL spend   : $%8.2f   %-12s (%s turns)\n", r.Total, tenge(r.Total, r.KZT), commas(r.Turns))
 	fmt.Printf("  this month    : $%8.2f   %s\n", r.Month, tenge(r.Month, r.KZT))
 	fmt.Printf("  today         : $%8.2f   %s\n", r.Today, tenge(r.Today, r.KZT))
