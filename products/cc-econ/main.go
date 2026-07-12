@@ -74,6 +74,7 @@ type sessRow struct {
 	Session string  `json:"session"`
 	Project string  `json:"project"`
 	Cost    float64 `json:"cost"`
+	Prefix  int     `json:"prefix"` // first-turn cache-write tokens ~ loaded context
 }
 type insight struct {
 	Level string `json:"level"` // good | watch | info
@@ -111,7 +112,8 @@ type report struct {
 	OutputSharePct float64   `json:"outputSharePct"` // output cost / total
 	IfSonnet       float64   `json:"ifSonnet"`       // same tokens, Sonnet rates
 	IfHaiku        float64   `json:"ifHaiku"`
-	PrefixTax      float64   `json:"prefixTax"` // avg cache-write $ per session
+	PrefixTax      float64   `json:"prefixTax"`    // avg cache-write $ per session
+	PrefixMedian   int       `json:"prefixMedian"` // median first-turn cache-write tokens
 	Insights       []insight `json:"insights"`
 
 	KZT float64 `json:"kzt"` // USD->KZT rate for tenge display
@@ -173,7 +175,7 @@ func analyze(dir string) (*report, error) {
 			proj[project] += c
 			model[e.Message.Model] += c
 			if sess[session] == nil {
-				sess[session] = &sessRow{Session: session, Project: project}
+				sess[session] = &sessRow{Session: session, Project: project, Prefix: u.CacheWrite}
 			}
 			sess[session].Cost += c
 		}
@@ -201,6 +203,16 @@ func analyze(dir string) (*report, error) {
 	}
 	sort.Slice(r.TopSessions, func(i, j int) bool { return r.TopSessions[i].Cost > r.TopSessions[j].Cost })
 	r.Sessions = len(sess)
+	var prefixes []int
+	for _, s := range sess {
+		if s.Prefix > 0 {
+			prefixes = append(prefixes, s.Prefix)
+		}
+	}
+	sort.Ints(prefixes)
+	if n := len(prefixes); n > 0 {
+		r.PrefixMedian = prefixes[n/2]
+	}
 	if len(r.TopSessions) > 12 {
 		r.TopSessions = r.TopSessions[:12]
 	}
@@ -272,6 +284,9 @@ func buildInsights(r *report) []insight {
 
 	if r.PrefixTax > 0 {
 		add("info", fmt.Sprintf("Prefix tax: ~%s per session goes to cache-writes before any real work — the cost of your loaded context/plugin stack.", money(r.PrefixTax)))
+	}
+	if r.PrefixMedian > 0 {
+		add("info", fmt.Sprintf("Loaded prefix ~%s tokens/session (system + tools + plugin stack) written to cache at each start. Trimming the stack shrinks this — the experiment lever.", commas(r.PrefixMedian)))
 	}
 	return out
 }
@@ -365,7 +380,8 @@ func printCLI(r *report) {
 	fmt.Printf("  this month    : $%8.2f   %s\n", r.Month, tenge(r.Month, r.KZT))
 	fmt.Printf("  today         : $%8.2f   %s\n", r.Today, tenge(r.Today, r.KZT))
 	fmt.Printf("  proj. month   : $%8.2f   %-12s (~$%s/yr)\n", r.MonthProjected, tenge(r.MonthProjected, r.KZT), commas(int(r.YearRate)))
-	fmt.Printf("  cache savings : $%8.2f   (hit rate %.0f%%)\n\n", r.CacheSavings, r.CacheHitRate*100)
+	fmt.Printf("  cache savings : $%8.2f   (hit rate %.0f%%)\n", r.CacheSavings, r.CacheHitRate*100)
+	fmt.Printf("  loaded prefix : ~%s tok/session (system+tools+plugins)\n\n", commas(r.PrefixMedian))
 	fmt.Printf("  tokens: in %s | out %s | cache-write %s | cache-read %s\n\n",
 		commas(r.In), commas(r.Out), commas(r.CW), commas(r.CR))
 
@@ -375,12 +391,12 @@ func printCLI(r *report) {
 	printRows("by project", r.ByProject, 10)
 	printRows("by model", r.ByModel, 10)
 
-	fmt.Println("--- top costly sessions ---")
+	fmt.Println("--- top costly sessions (cost · prefix tokens) ---")
 	for i, s := range r.TopSessions {
 		if i >= 8 {
 			break
 		}
-		fmt.Printf("  $%8.2f  %-22s  %s\n", s.Cost, trunc(s.Project, 22), s.Session[:8])
+		fmt.Printf("  $%8.2f  %9s tok  %-20s  %s\n", s.Cost, commas(s.Prefix), trunc(s.Project, 20), s.Session[:8])
 	}
 	fmt.Println()
 

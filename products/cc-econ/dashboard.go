@@ -128,6 +128,7 @@ function money(x){return "$"+x.toLocaleString("en-US",{minimumFractionDigits:2,m
 function money0(x){return "$"+Math.round(x).toLocaleString("en-US");}
 function commas(n){return n.toLocaleString("en-US");}
 function kzt(usd){return D.kzt>0 ? "₸"+Math.round(usd*D.kzt).toLocaleString("en-US") : "";}
+function ktok(n){return n>=1000 ? (n/1000).toFixed(n>=10000?0:1)+"k" : ""+n;}
 function el(tag,cls,html){var e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e;}
 
 document.getElementById("sub").textContent =
@@ -259,11 +260,11 @@ var app=document.getElementById("app");
 (function(){
   var s=el("section"); s.appendChild(el("h2",null,"Top costly sessions"));
   var t=el("table");
-  t.innerHTML="<tr><th>cost</th><th>project</th><th>session</th></tr>";
+  t.innerHTML="<tr><th>cost</th><th>prefix</th><th>project</th><th>session</th></tr>";
   D.topSessions.forEach(function(x){
     var tr=el("tr");
-    tr.innerHTML="<td class='amt'>"+money0(x.cost)+"</td><td>"+x.project+
-      "</td><td><code>"+x.session.slice(0,8)+"</code></td>";
+    tr.innerHTML="<td class='amt'>"+money0(x.cost)+"</td><td class='amt'>"+ktok(x.prefix)+
+      "</td><td>"+x.project+"</td><td><code>"+x.session.slice(0,8)+"</code></td>";
     t.appendChild(tr);
   });
   s.appendChild(t); app.appendChild(s);
