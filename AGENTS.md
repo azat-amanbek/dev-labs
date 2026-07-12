@@ -37,6 +37,20 @@ Treat every non-trivial change as an experiment:
 
 Never report success you have not observed. If a step was skipped, say so plainly.
 
+## Self-consult — recall-first
+
+Before a non-trivial **design, architecture, or method** decision in this repo, first
+consult the distilled knowledge base: from `products/cc-rag/` run
+
+    uv run rag query "<the situation in a few words>"
+
+and apply any relevant retrieved method/decision (name which one). This trades a cheap
+retrieval for expensive re-derivation and keeps decisions consistent with prior ones —
+that is the efficiency win (retrieval replaces re-thinking; it does **not** mean
+injecting on every turn). Skip it for trivial or unrelated tasks. When you make a new
+durable method/decision, add or update a `products/cc-rag/knowledge/*.md` doc so the
+next recall finds it.
+
 ## Go conventions
 
 - Idiomatic Go, standard layout. No external deps in a lab unless the lab is *about* a
