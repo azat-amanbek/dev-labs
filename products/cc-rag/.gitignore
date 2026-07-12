@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+# the index holds your private transcript text — never commit it
+data/
+*.npy
+*.npz

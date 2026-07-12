@@ -1,0 +1,20 @@
+[project]
+name = "cc-rag"
+version = "0.1.0"
+description = "Retrieval-first RAG over your Claude Code history + memory (local, brute-force)."
+requires-python = ">=3.12"
+dependencies = [
+    "fastembed>=0.4",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+rag = "cc_rag.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cc_rag"]

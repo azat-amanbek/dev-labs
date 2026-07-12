@@ -1,0 +1,12 @@
+# Retrieval eval set. Each item: a query + an `expect` substring a relevant
+# chunk (its text or citation) should contain. Add ~5-10 of your own real questions.
+- q: как cc-econ считает стоимость токенов
+  expect: cc-econ
+- q: почему отключение плагинов не снизило cache-write
+  expect: prefix
+- q: на какой подписке пользователь
+  expect: Max
+- q: чем эмбедим в RAG и почему мультиязычно
+  expect: multilingual
+- q: что решили про хранилище векторов
+  expect: pgvector
