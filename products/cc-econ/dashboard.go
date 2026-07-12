@@ -30,6 +30,7 @@ const dashboardHTML = `<!doctype html>
   .tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
   .tile .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
   .tile .v{font-size:24px;font-weight:650;margin-top:6px}
+  .tile .t{color:var(--warn);font-size:12px;font-weight:600;margin-top:2px}
   .tile.good .v{color:var(--good)}
   .tile .n{color:var(--dim);font-size:11px;margin-top:4px}
   section{background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -68,16 +69,18 @@ function money(x){
   return "$" + x.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 function commas(n){ return n.toLocaleString("en-US"); }
+function kzt(usd){ return D.kzt>0 ? "₸"+Math.round(usd*D.kzt).toLocaleString("en-US") : ""; }
 function el(tag,cls,html){
   var e=document.createElement(tag);
   if(cls)e.className=cls;
   if(html!=null)e.innerHTML=html;
   return e;
 }
-function tile(k,v,cls,note){
+function tile(k,v,tng,cls,note){
   var t=el("div","tile"+(cls?" "+cls:""));
   t.appendChild(el("div","k",k));
   t.appendChild(el("div","v",v));
+  if(tng)t.appendChild(el("div","t",tng));
   if(note)t.appendChild(el("div","n",note));
   return t;
 }
@@ -105,11 +108,11 @@ var app=document.getElementById("app");
 
 // tiles
 var tiles=el("div","tiles");
-tiles.appendChild(tile("Total spend",money(D.total),null,commas(D.turns)+" assistant turns"));
-tiles.appendChild(tile("This month",money(D.month)));
-tiles.appendChild(tile("Today",money(D.today)));
-tiles.appendChild(tile("Cache saved",money(D.cacheSavings),"good","vs full input rate"));
-tiles.appendChild(tile("Proj. month",money(D.monthProjected),null,"~"+money(D.yearRate)+" / yr"));
+tiles.appendChild(tile("Total spend",money(D.total),kzt(D.total),null,commas(D.turns)+" assistant turns"));
+tiles.appendChild(tile("This month",money(D.month),kzt(D.month)));
+tiles.appendChild(tile("Today",money(D.today),kzt(D.today)));
+tiles.appendChild(tile("Cache saved",money(D.cacheSavings),kzt(D.cacheSavings),"good","vs full input rate"));
+tiles.appendChild(tile("Proj. month",money(D.monthProjected),kzt(D.monthProjected),null,"~"+money(D.yearRate)+" / yr"));
 app.appendChild(tiles);
 
 // insights & optimization

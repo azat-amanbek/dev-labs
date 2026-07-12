@@ -109,6 +109,8 @@ type report struct {
 	IfHaiku        float64  `json:"ifHaiku"`
 	PrefixTax      float64  `json:"prefixTax"` // avg cache-write $ per session
 	Insights       []string `json:"insights"`
+
+	KZT float64 `json:"kzt"` // USD->KZT rate for tenge display
 }
 
 func analyze(dir string) (*report, error) {
@@ -284,6 +286,7 @@ func main() {
 	}
 	dir := flag.String("dir", def, "Claude Code projects directory")
 	serve := flag.String("serve", "", "serve dashboard at this address, e.g. :7777")
+	kzt := flag.Float64("kzt", 472.0, "USD->KZT rate for tenge display (0 to hide)")
 	flag.Parse()
 
 	if *serve != "" {
@@ -293,6 +296,7 @@ func main() {
 				http.Error(w, err.Error(), 500)
 				return
 			}
+			r.KZT = *kzt
 			b, _ := json.Marshal(r)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Write([]byte(strings.Replace(dashboardHTML, "__DATA__", string(b), 1)))
@@ -310,15 +314,23 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	r.KZT = *kzt
 	printCLI(r)
+}
+
+func tenge(usd, rate float64) string {
+	if rate <= 0 {
+		return ""
+	}
+	return "₸" + commas(int(usd*rate))
 }
 
 func printCLI(r *report) {
 	fmt.Printf("=== Claude Code economics (%d transcripts) ===\n\n", r.Files)
-	fmt.Printf("  TOTAL spend   : $%8.2f   (%s turns)\n", r.Total, commas(r.Turns))
-	fmt.Printf("  this month    : $%8.2f\n", r.Month)
-	fmt.Printf("  today         : $%8.2f\n", r.Today)
-	fmt.Printf("  proj. month   : $%8.2f   (~$%s/yr at this rate)\n", r.MonthProjected, commas(int(r.YearRate)))
+	fmt.Printf("  TOTAL spend   : $%8.2f   %-12s (%s turns)\n", r.Total, tenge(r.Total, r.KZT), commas(r.Turns))
+	fmt.Printf("  this month    : $%8.2f   %s\n", r.Month, tenge(r.Month, r.KZT))
+	fmt.Printf("  today         : $%8.2f   %s\n", r.Today, tenge(r.Today, r.KZT))
+	fmt.Printf("  proj. month   : $%8.2f   %-12s (~$%s/yr)\n", r.MonthProjected, tenge(r.MonthProjected, r.KZT), commas(int(r.YearRate)))
 	fmt.Printf("  cache savings : $%8.2f   (hit rate %.0f%%)\n\n", r.CacheSavings, r.CacheHitRate*100)
 	fmt.Printf("  tokens: in %s | out %s | cache-write %s | cache-read %s\n\n",
 		commas(r.In), commas(r.Out), commas(r.CW), commas(r.CR))
