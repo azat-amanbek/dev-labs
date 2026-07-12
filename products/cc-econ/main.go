@@ -3,8 +3,11 @@
 // It parses the raw session transcripts Claude Code writes to
 // ~/.claude/projects/**/*.jsonl (the ground truth: every assistant turn
 // carries message.usage + message.model + a timestamp), prices each turn with
-// real per-model rates, and prints a spend breakdown by day / project /
+// real per-model rates, and reports a spend breakdown by day / project /
 // model, plus what prompt caching saved you.
+//
+//	go run .            # CLI summary
+//	go run . -serve :7777   # local dashboard at http://localhost:7777
 package main
 
 import (
@@ -12,6 +15,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -61,46 +65,47 @@ type entry struct {
 	} `json:"message"`
 }
 
-type agg struct {
-	cost            float64
-	in, out, cw, cr int
-	turns           int
+// ---- report (JSON-serializable, shared by CLI and dashboard) ----
+type nameRow struct {
+	Name string  `json:"name"`
+	Cost float64 `json:"cost"`
+}
+type sessRow struct {
+	Session string  `json:"session"`
+	Project string  `json:"project"`
+	Cost    float64 `json:"cost"`
+}
+type report struct {
+	Files        int       `json:"files"`
+	Total        float64   `json:"total"`
+	Month        float64   `json:"month"`
+	Today        float64   `json:"today"`
+	CacheSavings float64   `json:"cacheSavings"`
+	Turns        int       `json:"turns"`
+	In           int       `json:"in"`
+	Out          int       `json:"out"`
+	CW           int       `json:"cw"`
+	CR           int       `json:"cr"`
+	ByDay        []nameRow `json:"byDay"` // chronological
+	ByProject    []nameRow `json:"byProject"`
+	ByModel      []nameRow `json:"byModel"`
+	TopSessions  []sessRow `json:"topSessions"`
 }
 
-func (a *agg) add(u usage, r rate) {
-	a.cost += float64(u.Input)/1e6*r.in +
-		float64(u.Output)/1e6*r.out +
-		float64(u.CacheWrite)/1e6*r.cacheWrite +
-		float64(u.CacheRead)/1e6*r.cacheRead
-	a.in += u.Input
-	a.out += u.Output
-	a.cw += u.CacheWrite
-	a.cr += u.CacheRead
-	a.turns++
-}
-
-func main() {
-	home, _ := os.UserHomeDir()
-	// Claude Code data lives on the Windows side; from WSL that's /mnt/c/...
-	def := "/mnt/c/Users/aamanbek/.claude/projects"
-	if _, err := os.Stat(def); err != nil {
-		def = filepath.Join(home, ".claude", "projects")
-	}
-	dir := flag.String("dir", def, "Claude Code projects directory")
-	flag.Parse()
-
-	var total agg
-	byDay := map[string]*agg{}
-	byProject := map[string]*agg{}
-	byModel := map[string]*agg{}
-	bySession := map[string]*agg{}
-	sessionProject := map[string]string{}
-	var cacheSavings float64 // vs paying full input rate for cache-read tokens
-
-	files, _ := filepath.Glob(filepath.Join(*dir, "*", "*.jsonl"))
+func analyze(dir string) (*report, error) {
+	files, _ := filepath.Glob(filepath.Join(dir, "*", "*.jsonl"))
 	if len(files) == 0 {
-		fmt.Printf("no transcripts under %s\n", *dir)
-		os.Exit(1)
+		return nil, fmt.Errorf("no transcripts under %s", dir)
+	}
+	r := &report{Files: len(files)}
+	day := map[string]float64{}
+	proj := map[string]float64{}
+	model := map[string]float64{}
+	sess := map[string]*sessRow{}
+
+	price := func(u usage, rt rate) float64 {
+		return float64(u.Input)/1e6*rt.in + float64(u.Output)/1e6*rt.out +
+			float64(u.CacheWrite)/1e6*rt.cacheWrite + float64(u.CacheRead)/1e6*rt.cacheRead
 	}
 
 	for _, f := range files {
@@ -111,7 +116,7 @@ func main() {
 			continue
 		}
 		sc := bufio.NewScanner(fh)
-		sc.Buffer(make([]byte, 1024*1024), 16*1024*1024) // lines can be big
+		sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 		for sc.Scan() {
 			line := sc.Bytes()
 			if len(line) == 0 {
@@ -121,27 +126,28 @@ func main() {
 			if json.Unmarshal(line, &e) != nil || e.Type != "assistant" {
 				continue
 			}
-			r, ok := rateFor(e.Message.Model)
+			rt, ok := rateFor(e.Message.Model)
 			if !ok {
 				continue
 			}
 			u := e.Message.Usage
+			c := price(u, rt)
 
-			total.add(u, r)
-			cacheSavings += float64(u.CacheRead) / 1e6 * (r.in - r.cacheRead)
+			r.Total += c
+			r.CacheSavings += float64(u.CacheRead) / 1e6 * (rt.in - rt.cacheRead)
+			r.Turns++
+			r.In += u.Input
+			r.Out += u.Output
+			r.CW += u.CacheWrite
+			r.CR += u.CacheRead
 
-			get := func(m map[string]*agg, k string) *agg {
-				if m[k] == nil {
-					m[k] = &agg{}
-				}
-				return m[k]
+			day[e.Timestamp.Local().Format("2006-01-02")] += c
+			proj[project] += c
+			model[e.Message.Model] += c
+			if sess[session] == nil {
+				sess[session] = &sessRow{Session: session, Project: project}
 			}
-			day := e.Timestamp.Local().Format("2006-01-02")
-			get(byDay, day).add(u, r)
-			get(byProject, project).add(u, r)
-			get(byModel, e.Message.Model).add(u, r)
-			get(bySession, session).add(u, r)
-			sessionProject[session] = project
+			sess[session].Cost += c
 		}
 		fh.Close()
 	}
@@ -149,71 +155,107 @@ func main() {
 	now := time.Now()
 	monthPrefix := now.Format("2006-01")
 	today := now.Format("2006-01-02")
-	var monthCost, todayCost float64
-	for day, a := range byDay {
-		if strings.HasPrefix(day, monthPrefix) {
-			monthCost += a.cost
+	for d, c := range day {
+		if strings.HasPrefix(d, monthPrefix) {
+			r.Month += c
 		}
-		if day == today {
-			todayCost += a.cost
+		if d == today {
+			r.Today += c
 		}
+		r.ByDay = append(r.ByDay, nameRow{d, c})
 	}
+	sort.Slice(r.ByDay, func(i, j int) bool { return r.ByDay[i].Name < r.ByDay[j].Name })
 
-	fmt.Printf("=== Claude Code economics (%d transcripts) ===\n\n", len(files))
-	fmt.Printf("  TOTAL spend   : $%8.2f   (%s turns)\n", total.cost, commas(total.turns))
-	fmt.Printf("  this month    : $%8.2f\n", monthCost)
-	fmt.Printf("  today         : $%8.2f\n", todayCost)
-	fmt.Printf("  cache savings : $%8.2f   (cache-reads billed at 0.1x instead of full input)\n\n", cacheSavings)
-
-	fmt.Printf("  tokens: in %s | out %s | cache-write %s | cache-read %s\n\n",
-		commas(total.in), commas(total.out), commas(total.cw), commas(total.cr))
-
-	printTop("by day (recent)", byDay, 10, true)
-	printTop("by project", byProject, 10, false)
-	printTop("by model", byModel, 10, false)
-	printTopSessions("top costly sessions", bySession, sessionProject, 8)
+	r.ByProject = sortedRows(proj)
+	r.ByModel = sortedRows(model)
+	for _, s := range sess {
+		r.TopSessions = append(r.TopSessions, *s)
+	}
+	sort.Slice(r.TopSessions, func(i, j int) bool { return r.TopSessions[i].Cost > r.TopSessions[j].Cost })
+	if len(r.TopSessions) > 12 {
+		r.TopSessions = r.TopSessions[:12]
+	}
+	return r, nil
 }
 
-func printTop(title string, m map[string]*agg, n int, chrono bool) {
-	type kv struct {
-		k string
-		a *agg
+func sortedRows(m map[string]float64) []nameRow {
+	var s []nameRow
+	for k, v := range m {
+		s = append(s, nameRow{k, v})
 	}
-	var s []kv
-	for k, a := range m {
-		s = append(s, kv{k, a})
+	sort.Slice(s, func(i, j int) bool { return s[i].Cost > s[j].Cost })
+	return s
+}
+
+func main() {
+	def := "/mnt/c/Users/aamanbek/.claude/projects"
+	if _, err := os.Stat(def); err != nil {
+		home, _ := os.UserHomeDir()
+		def = filepath.Join(home, ".claude", "projects")
 	}
-	if chrono {
-		sort.Slice(s, func(i, j int) bool { return s[i].k > s[j].k })
-	} else {
-		sort.Slice(s, func(i, j int) bool { return s[i].a.cost > s[j].a.cost })
+	dir := flag.String("dir", def, "Claude Code projects directory")
+	serve := flag.String("serve", "", "serve dashboard at this address, e.g. :7777")
+	flag.Parse()
+
+	if *serve != "" {
+		http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+			r, err := analyze(*dir)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			b, _ := json.Marshal(r)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte(strings.Replace(dashboardHTML, "__DATA__", string(b), 1)))
+		})
+		fmt.Printf("cc-econ dashboard: http://localhost%s  (reading %s)\n", *serve, *dir)
+		if err := http.ListenAndServe(*serve, nil); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		return
 	}
-	fmt.Printf("--- %s ---\n", title)
-	for i, e := range s {
-		if i >= n {
+
+	r, err := analyze(*dir)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	printCLI(r)
+}
+
+func printCLI(r *report) {
+	fmt.Printf("=== Claude Code economics (%d transcripts) ===\n\n", r.Files)
+	fmt.Printf("  TOTAL spend   : $%8.2f   (%s turns)\n", r.Total, commas(r.Turns))
+	fmt.Printf("  this month    : $%8.2f\n", r.Month)
+	fmt.Printf("  today         : $%8.2f\n", r.Today)
+	fmt.Printf("  cache savings : $%8.2f\n\n", r.CacheSavings)
+	fmt.Printf("  tokens: in %s | out %s | cache-write %s | cache-read %s\n\n",
+		commas(r.In), commas(r.Out), commas(r.CW), commas(r.CR))
+
+	byDayDesc := append([]nameRow(nil), r.ByDay...)
+	sort.Slice(byDayDesc, func(i, j int) bool { return byDayDesc[i].Name > byDayDesc[j].Name })
+	printRows("by day (recent)", byDayDesc, 10)
+	printRows("by project", r.ByProject, 10)
+	printRows("by model", r.ByModel, 10)
+
+	fmt.Println("--- top costly sessions ---")
+	for i, s := range r.TopSessions {
+		if i >= 8 {
 			break
 		}
-		fmt.Printf("  %-28s $%9.2f\n", trunc(e.k, 28), e.a.cost)
+		fmt.Printf("  $%8.2f  %-22s  %s\n", s.Cost, trunc(s.Project, 22), s.Session[:8])
 	}
 	fmt.Println()
 }
 
-func printTopSessions(title string, m map[string]*agg, proj map[string]string, n int) {
-	type kv struct {
-		k string
-		a *agg
-	}
-	var s []kv
-	for k, a := range m {
-		s = append(s, kv{k, a})
-	}
-	sort.Slice(s, func(i, j int) bool { return s[i].a.cost > s[j].a.cost })
+func printRows(title string, rows []nameRow, n int) {
 	fmt.Printf("--- %s ---\n", title)
-	for i, e := range s {
+	for i, e := range rows {
 		if i >= n {
 			break
 		}
-		fmt.Printf("  $%8.2f  %-22s  %s\n", e.a.cost, trunc(proj[e.k], 22), e.k[:8])
+		fmt.Printf("  %-28s $%9.2f\n", trunc(e.Name, 28), e.Cost)
 	}
 	fmt.Println()
 }
