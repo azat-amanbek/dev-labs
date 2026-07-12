@@ -18,7 +18,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` working depth
 ## 2 · Data structures / algorithms
 - [ ] lsm-tree
 - [ ] bplus-tree
-- [ ] bloom-hll-cms
+- [~] bloom-hll-cms
 - [~] consistent-hashing
 - [ ] merkle-crdt
 - [ ] timing-wheels
